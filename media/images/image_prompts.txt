@@ -1,0 +1,24 @@
+# ============================================================================
+# SCENE IMAGE LIST  (drives background images AND the DM's scene tag ids)
+# ============================================================================
+# Format (one scene per line):
+#     scene_id | image_file | image-generation prompt
+#
+# - scene_id: what the DM writes inside [[SCENE: scene_id]] tags.
+#   Add, remove or rename ids freely; the DM sees this list live.
+# - image_file: the file the game shows as the background, placed in this
+#   folder (media/images/). If the file is missing, the game keeps the
+#   current background, so you can generate images gradually.
+# - prompt: ready-to-use image-generation prompt for that scene.
+# ============================================================================
+
+prologue | prologue.jpg | Epic dark fantasy vista of the volcano kingdom of Cinderkeep at dusk, glowing caldera lighting storm clouds, wagon road winding toward massive iron-bound city gates, ember motes in the air, painterly, cinematic wide shot, no text
+ashgate | ashgate.jpg | Dark fantasy city gate district at night, huge sealed iron gates, torch-lit cobblestone plaza, guard towers, refugees' carts, smoke and embers, painterly, cinematic, no text
+tavern | tavern.jpg | Cozy dark fantasy tavern interior, roaring hearth, low wooden beams, crowded tables, tin lantern light, warm amber tones against a cold night outside, painterly, no text
+forge_temple | forge_temple.jpg | Vast dark fantasy forge-temple interior with a river of molten lava flowing past enormous bronze idols and anvils, blacksmith priests, sparks and smoke, dramatic orange rim light, painterly, no text
+thieves_bazaar | thieves_bazaar.jpg | Sprawling nocturnal black-market bazaar in cavernous ruins, hundreds of colored tents and hanging lanterns, masked figures, exotic goods, misty alleys, painterly, cinematic, no text
+catacombs | catacombs.jpg | Ancient bone-lined catacombs beneath a dark fantasy city, walls of stacked skulls, narrow passages, single torchlight, cold blue ambience with deep shadows, painterly, no text
+undervault | undervault.jpg | Colossal volcanic vault deep under a mountain, obsidian columns rising over a chasm of magma, a glowing black crown hovering above the fire, ominous dark fantasy, epic scale, painterly, no text
+street | street.jpg | Narrow cobbled street in a dark fantasy volcanic city, basalt buildings with warm window light, ash falling like snow, mysterious hooded figure in the distance, painterly, no text
+combat | combat.jpg | Dynamic dark fantasy battle in a torch-lit plaza, swords clashing with sparks, motion blur, dramatic low angle, ember storm, painterly, no text
+map | map.jpg | Hand-drawn fantasy parchment map of a volcanic city called Cinderkeep with districts labeled Ashgate, Forge-Temple, Thieves' Bazaar, Catacombs and Undervault, sepia ink, compass rose, aged paper, no modern elements

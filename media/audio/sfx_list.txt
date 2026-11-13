@@ -1,0 +1,24 @@
+# ============================================================================
+# SOUND EFFECT LIST  (drives the DM's [[SFX: sfx_id]] tags)
+# ============================================================================
+# Format (one sound per line):
+#     sfx_id | audio_file | description (what it is for)
+#
+# - sfx_id: what the DM writes inside [[SFX: sfx_id]] tags, and what the
+#   game looks up when buttons are pressed.
+# - audio_file: the sound file placed in this folder (media/audio/).
+#   Supported formats: whatever your browser plays (mp3, ogg, wav, m4a).
+#   If the file is missing the sound is silently skipped.
+# ============================================================================
+
+door_creak | door_creak.mp3 | old wooden or iron door slowly opening
+torch_ignite | torch_ignite.mp3 | a torch or fire flaring to life
+footsteps | footsteps.mp3 | footsteps on stone or cobbles
+market_crowd | market_crowd.mp3 | bustling bazaar crowd ambience
+combat_clash | combat_clash.mp3 | swords clashing in battle
+discovery | discovery.mp3 | finding something wondrous or important
+danger | danger.mp3 | ominous danger sting, something is wrong
+magic | magic.mp3 | rare and costly arcane magic being cast
+victory | victory.mp3 | triumphant fanfare after a hard-won fight
+death | death.mp3 | a named NPC dying
+ui_click | ui_click.mp3 | interface button click (played on buttons)

@@ -1,0 +1,8 @@
+dnd_api_key.txt
+.dnd_session.json
+__pycache__/
+media/images/*.png
+media/images/*.jpg
+media/audio/*.mp3
+media/audio/*.ogg
+media/audio/*.wav

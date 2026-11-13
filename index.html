@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backboard D&D</title>
+<style>
+  :root {
+    --gold: #d4a334; --ink: #f0e6cc; --dim: #b0a184; --panel: rgba(12,10,6,.82);
+    --border: rgba(212,163,52,.55); --red: #ff8866;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: Georgia, 'Times New Roman', serif;
+    color: var(--ink); background: radial-gradient(circle at 50% 30%, #241c10, #0a0806 75%);
+  }
+  /* ---- backgrounds ---- */
+  .bg {
+    position: fixed; inset: 0; background-size: cover; background-position: center;
+    opacity: 0; transition: opacity 1.6s ease; z-index: 0;
+  }
+  .bg.on { opacity: 1; }
+  #vignette {
+    position: fixed; inset: 0; z-index: 1; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,.78) 100%);
+  }
+  /* ---- top left: character panel ---- */
+  #char-panel {
+    position: fixed; top: 14px; left: 14px; z-index: 5;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 16px; min-width: 220px; max-width: 300px;
+    display: none; backdrop-filter: blur(2px);
+  }
+  #char-panel.show { display: block; animation: fadein .8s ease; }
+  #char-panel h2 {
+    color: var(--gold); font-size: 17px; letter-spacing: 1px; margin-bottom: 6px;
+  }
+  #char-panel .row { font-size: 13px; line-height: 1.6; color: var(--dim); }
+  #char-panel .row b { color: var(--ink); font-weight: normal; }
+  /* ---- top right: buttons ---- */
+  #menu {
+    position: fixed; top: 14px; right: 14px; z-index: 5;
+    display: none; gap: 8px;
+  }
+  #menu.show { display: flex; animation: fadein .8s ease; }
+  .mbtn {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--gold); font-family: Georgia, serif; font-size: 14px;
+    padding: 8px 16px; cursor: pointer; letter-spacing: 1px;
+  }
+  .mbtn:hover { background: rgba(60,48,20,.9); }
+  /* ---- dialog + composer at the bottom ---- */
+  #dialog {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 96px; z-index: 4; width: min(860px, 92vw);
+    max-height: 38vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 22px; display: none; backdrop-filter: blur(2px);
+  }
+  #dialog.show { display: block; animation: fadein .8s ease; }
+  #dialog .who {
+    color: var(--gold); font-size: 11px; letter-spacing: 4px; text-transform: uppercase;
+    margin-bottom: 6px; font-family: 'Courier New', monospace;
+  }
+  #dialog p { font-size: 15px; line-height: 1.6; margin-bottom: 10px; }
+  #dialog p:last-child { margin-bottom: 0; }
+  #dialog .dice { color: var(--gold); font-family: 'Courier New', monospace; }
+  #dialog .err { color: var(--red); }
+  #composer {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 26px; z-index: 4; width: min(860px, 92vw);
+    display: flex; gap: 10px;
+  }
+  #input {
+    flex: 1; background: rgba(10,8,5,.85); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--ink); font-family: Georgia, serif;
+    font-size: 15px; padding: 12px 14px; outline: none;
+  }
+  #input:focus { border-color: var(--gold); }
+  #send {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--gold); font-family: Georgia, serif; font-size: 15px;
+    padding: 0 22px; cursor: pointer; letter-spacing: 1px;
+  }
+  #send:hover { background: rgba(60,48,20,.9); }
+  #send:disabled { opacity: .45; cursor: wait; }
+  /* ---- modals ---- */
+  .modal-back {
+    position: fixed; inset: 0; z-index: 9; background: rgba(0,0,0,.6);
+    display: none; align-items: center; justify-content: center;
+  }
+  .modal-back.show { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    width: min(560px, 90vw); max-height: 80vh; overflow-y: auto; padding: 20px 24px;
+  }
+  .modal h2 { color: var(--gold); letter-spacing: 2px; font-size: 15px; margin-bottom: 12px;
+             font-family: 'Courier New', monospace; }
+  .modal ul { padding-left: 20px; }
+  .modal li { font-size: 14px; line-height: 1.8; }
+  .modal img { display: block; margin: 0 auto; max-width: 100%; border: 1px solid var(--border);
+              border-radius: 4px; }
+  .modal .close-row { text-align: right; margin-top: 14px; }
+  .modal button {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--gold); font-family: Georgia, serif; padding: 6px 16px; cursor: pointer;
+  }
+  .modal button:hover { background: rgba(60,48,20,.9); }
+  .modal input[type=range] { width: 100%; accent-color: var(--gold); }
+  .modal .note { color: var(--dim); font-size: 12px; line-height: 1.5; margin: 6px 0; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+  #char-panel.show { animation-name: fadein2; }
+  @keyframes fadein2 { from { opacity: 0; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="bg-a" class="bg"></div>
+<div id="bg-b" class="bg"></div>
+<div id="vignette"></div>
+
+<div id="char-panel">
+  <h2 id="char-name">?</h2>
+  <div class="row" id="char-rows"></div>
+</div>
+
+<div id="menu">
+  <button class="mbtn" id="btn-inventory">Inventory</button>
+  <button class="mbtn" id="btn-map">Map</button>
+  <button class="mbtn" id="btn-settings">Settings</button>
+</div>
+
+<div id="dialog">
+  <div class="who">Dungeon Master</div>
+  <div id="dm-text"></div>
+</div>
+
+<div id="composer">
+  <input id="input" placeholder="What do you do?" autocomplete="off">
+  <button id="send">Send</button>
+</div>
+
+<div class="modal-back" id="modal-inventory">
+  <div class="modal">
+    <h2>Inventory</h2>
+    <ul id="inv-list"></ul>
+    <div class="close-row"><button data-close="modal-inventory">Close</button></div>
+  </div>
+</div>
+<div class="modal-back" id="modal-map">
+  <div class="modal">
+    <h2>Map of Cinderkeep</h2>
+    <div id="map-body" class="note">No map image found at media/images/map.png.</div>
+    <div class="close-row"><button data-close="modal-map">Close</button></div>
+  </div>
+</div>
+<div class="modal-back" id="modal-settings">
+  <div class="modal">
+    <h2>Settings</h2>
+    <div class="note">Sound volume</div>
+    <input type="range" id="volume" min="0" max="100" value="70">
+    <div class="note" id="settings-model"></div>
+    <div class="note">Starting a new game abandons the current adventure and begins the prologue + character creation again.</div>
+    <div class="close-row">
+      <button id="btn-new-game">New Game</button>
+      <button data-close="modal-settings">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var scenes = {}, sfx = {};
+  var volume = 0.7;
+  var inventory = [];
+  var busy = false;
+  var bgFront = "bg-a", bgBack = "bg-b";
+
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // ---------- audio ----------
+  function playSfx(id) {
+    var entry = sfx[id];
+    if (!entry) return;
+    try {
+      var a = new Audio("/media/audio/" + entry.file);
+      a.volume = volume;
+      a.play().catch(function () {});  // autoplay blocks before first gesture: fine
+    } catch (e) {}
+  }
+
+  // ---------- backgrounds ----------
+  function applyScene(id) {
+    var entry = scenes[id];
+    if (!entry) return;  // unknown scene id: keep current background
+    var back = $(bgBack);
+    back.style.backgroundImage = 'url("/media/images/' + entry.file + '")';
+    back.classList.add("on");
+    $(bgFront).classList.remove("on");
+    var tmp = bgFront; bgFront = bgBack; bgBack = tmp;
+  }
+
+  // ---------- DM tag protocol ----------
+  function parseTags(text) {
+    var actions = [];
+    text = text.replace(/\[\[SCENE:\s*([a-zA-Z0-9_ -]+?)\s*\]\]/g, function (_, id) {
+      actions.push({ type: "scene", id: id.toLowerCase().replace(/[^a-z0-9_]/g, "_") });
+      return "";
+    });
+    text = text.replace(/\[\[SFX:\s*([a-zA-Z0-9_ -]+?)\s*\]\]/g, function (_, id) {
+      actions.push({ type: "sfx", id: id.toLowerCase().replace(/[^a-z0-9_]/g, "_") });
+      return "";
+    });
+    text = text.replace(/\[\[CHARACTER:\s*([^\]]+?)\s*\]\]/g, function (_, payload) {
+      actions.push({ type: "character", fields: payload.split("|").map(function (f) { return f.trim(); }) });
+      return "";
+    });
+    text = text.replace(/\[\[ITEM\s*([+-]):\s*([^\]]+?)\s*\]\]/g, function (_, dir, item) {
+      actions.push({ type: "item", dir: dir, item: item.trim() });
+      return "";
+    });
+    return { text: text, actions: actions };
+  }
+
+  function renderDm(text) {
+    var out = [];
+    text.split(/\n\s*\n/).forEach(function (para) {
+      if (!para.trim()) return;
+      var html = esc(para.trim())
+        .replace(/\*([^*]+)\*/g, '<span class="dice">*$1*</span>')
+        .replace(/\n/g, "<br>");
+      out.push("<p>" + html + "</p>");
+    });
+    return out.join("");
+  }
+
+  function applyActions(actions) {
+    actions.forEach(function (a) {
+      if (a.type === "scene") applyScene(a.id);
+      else if (a.type === "sfx") playSfx(a.id);
+      else if (a.type === "character") {
+        // fields: name | ancestry | calling | keepsake | trait
+        $("char-name").textContent = a.fields[0] || "?";
+        var labels = ["Ancestry", "Calling", "Keepsake", "Trait"];
+        var html = "";
+        for (var i = 1; i <= 4; i++) {
+          if (a.fields[i]) html += labels[i - 1] + ": <b>" + esc(a.fields[i]) + "</b><br>";
+        }
+        $("char-rows").innerHTML = html;
+        $("char-panel").classList.add("show");
+        $("menu").classList.add("show");
+      } else if (a.type === "item") {
+        if (a.dir === "+") {
+          if (inventory.indexOf(a.item) < 0) inventory.push(a.item);
+        } else {
+          inventory = inventory.filter(function (i) { return i !== a.item; });
+        }
+        renderInventory();
+      }
+    });
+  }
+
+  function renderInventory() {
+    $("inv-list").innerHTML = inventory.length
+      ? inventory.map(function (i) { return "<li>" + esc(i) + "</li>"; }).join("")
+      : "<li style='color:#b0a184'>(nothing but lint and hope)</li>";
+  }
+
+  // ---------- dialogs & modals ----------
+  function dmSpeak(html, isError) {
+    $("dialog").classList.add("show");
+    $("dm-text").innerHTML = isError
+      ? '<p class="err">' + html + "</p>" : renderDm(html);
+    $("dialog").scrollTop = $("dialog").scrollHeight;
+  }
+
+  function modal(id, show) { $(id).classList.toggle("show", show); }
+  document.querySelectorAll("[data-close]").forEach(function (b) {
+    b.addEventListener("click", function () { modal(b.getAttribute("data-close"), false); });
+  });
+  document.querySelectorAll(".modal-back").forEach(function (m) {
+    m.addEventListener("click", function (e) { if (e.target === m) m.classList.remove("show"); });
+  });
+
+  $("btn-inventory").addEventListener("click", function () { playSfx("ui_click"); renderInventory(); modal("modal-inventory", true); });
+  $("btn-map").addEventListener("click", function () { playSfx("ui_click"); openMap(); });
+  $("btn-settings").addEventListener("click", function () { playSfx("ui_click"); modal("modal-settings", true); });
+  $("volume").addEventListener("input", function () { volume = this.value / 100; });
+  $("btn-new-game").addEventListener("click", function () {
+    modal("modal-settings", false);
+    newGame();
+  });
+
+  function openMap() {
+    var body = $("map-body");
+    var entry = scenes["map"];
+    if (entry) {
+      body.innerHTML = '<img src="/media/images/' + entry.file + '" alt="Map of Cinderkeep">';
+    } else {
+      body.textContent = "Add a line to media/images/image_prompts.txt:  map | map.png | the city map";
+    }
+    modal("modal-map", true);
+  }
+
+  // ---------- api ----------
+  function post(path, body) {
+    return fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {})
+    }).then(function (r) { return r.json(); });
+  }
+
+  function handleReply(data) {
+    if (data.error) {
+      dmSpeak("*Error:* " + data.error + " — fix the issue and send again.", true);
+      return;
+    }
+    var parsed = parseTags(data.content || "");
+    applyActions(parsed.actions);
+    dmSpeak(parsed.text.trim() || "*(silence)*");
+  }
+
+  function send() {
+    if (busy) return;
+    var text = $("input").value.trim();
+    if (!text) return;
+    busy = true;
+    $("send").disabled = true;
+    $("input").value = "";
+    dmSpeak("*You:* " + esc(text).replace(/</g, "&lt;") + "\n\n*The DM ponders...*");
+    post("/api/send", { content: text }).then(handleReply).catch(function (e) {
+      dmSpeak("*Error:* " + e, true);
+    }).then(function () { busy = false; $("send").disabled = false; $("input").focus(); });
+  }
+
+  function newGame() {
+    if (busy) return;
+    busy = true;
+    $("send").disabled = true;
+    $("char-panel").classList.remove("show");
+    $("menu").classList.remove("show");
+    $("dialog").classList.remove("show");
+    inventory = [];
+    dmSpeak("*A new tale begins...*");
+    post("/api/new", {}).then(handleReply).catch(function (e) {
+      dmSpeak("*Error:* " + e, true);
+    }).then(function () { busy = false; $("send").disabled = false; $("input").focus(); });
+  }
+
+  $("send").addEventListener("click", send);
+  $("input").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); send(); }
+  });
+
+  // ---------- startup: nothing on screen but the dialog + typing area ------
+  fetch("/api/manifest").then(function (r) { return r.json(); }).then(function (m) {
+    scenes = m.scenes || {};
+    sfx = m.sfx || {};
+  }).catch(function () {});
+  fetch("/api/state").then(function (r) { return r.json(); }).then(function (s) {
+    $("settings-model").textContent = s.model ? "DM model: " + s.model : "";
+    if (!s.active) {
+      newGame();  // prologue + character creation fills the dialog
+    } else {
+      dmSpeak("You return to your adventure. Type an action to continue - or open Settings for a new game.");
+    }
+  });
+  $("input").focus();
+})();
+</script>
+</body>
+</html>
