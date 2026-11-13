@@ -58,3 +58,6 @@ Progress (thread id, model) also persists in `.dnd_session.json`.
 ## Editing the plot & constraints
 Edit **`dnd_plot.py`** - the general plot, game flow, and constraints.
 Changes apply to the next DM reply.
+
+
+https://devpost.com/software/infinite-prologue/joins/9kWnIFTJlFbTDHuWcXm80g
