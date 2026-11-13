@@ -17,11 +17,17 @@ reply includes a description of the new setting plus an ASCII drawing.
 
 ## How to run
 ```
-set BACKBOARD_API_KEY=your-key-here
 python backboard_dnd.py
 ```
-If the env var is not set you'll be prompted for the key at startup.
-The key is only used in memory and sent to `app.backboard.io`.
+**API key** - pick whichever you prefer:
+- Put your key on the first non-comment line of **`dnd_api_key.txt`** (recommended)
+- Run `python backboard_dnd.py YOUR-KEY`
+- Set the `BACKBOARD_API_KEY` environment variable
+
+If none of those are found you'll get a plain visible prompt (the key will
+show as you type - that is intended, since hidden `getpass` prompts misbehave
+in some Windows terminals). The key is only used in memory and sent to
+`app.backboard.io`; it is in `.gitignore` so it won't be committed.
 
 ## Commands
 `/new` start a fresh game (new thread) - `/model` pick a DM model from

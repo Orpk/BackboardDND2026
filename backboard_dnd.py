@@ -5,12 +5,12 @@ Pure standard-library Python (no pip installs). Talks directly to the
 Backboard API at https://app.backboard.io/api.
 
 Run:        python backboard_dnd.py
-API key:    set BACKBOARD_API_KEY in your environment, or you will be
-            prompted at startup.
+API key:    put your key on the first line of dnd_api_key.txt, or set
+            BACKBOARD_API_KEY, or pass it as an argument:
+            python backboard_dnd.py YOUR-KEY
 Commands:   /help  /new  /model  /plot  /quit
 """
 
-import getpass
 import json
 import os
 import sys
@@ -23,6 +23,8 @@ import dnd_plot  # the editable plot & constraints file
 API = "https://app.backboard.io/api"
 SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             ".dnd_session.json")
+KEY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "dnd_api_key.txt")
 
 # ANSI colors
 GOLD = "\033[93m"
@@ -236,6 +238,40 @@ Anything else is sent to the Dungeon Master.
 """)
 
 
+def read_api_key():
+    """Resolve the Backboard API key.
+
+    Order: dnd_api_key.txt file, BACKBOARD_API_KEY env var, command-line
+    argument, then a plain *visible* input prompt. The hidden getpass
+    prompt is deliberately not used - it is unreliable in several Windows
+    terminals and can appear to accept no typing at all.
+    """
+    # 1. Key file (first non-comment line of dnd_api_key.txt).
+    try:
+        with open(KEY_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    return line
+    except OSError:
+        pass
+    # 2. Environment variable.
+    key = os.environ.get("BACKBOARD_API_KEY", "").strip()
+    if key:
+        return key
+    # 3. Command-line argument.
+    if len(sys.argv) > 1:
+        return sys.argv[1].strip()
+    # 4. Visible prompt (what you type will be shown - that is intended).
+    print(c("No API key found.", RED))
+    print(c("Recommended: paste your key on the first line of dnd_api_key.txt", DIM))
+    print(c("(or run: python backboard_dnd.py YOUR-KEY, or set BACKBOARD_API_KEY).", DIM))
+    try:
+        return input("Backboard API key (typed visibly): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
+
+
 def main():
     print(c("""
 +==============================================+
@@ -244,11 +280,9 @@ def main():
 +==============================================+
 """, GOLD))
 
-    api_key = os.environ.get("BACKBOARD_API_KEY", "").strip()
+    api_key = read_api_key()
     if not api_key:
-        api_key = getpass.getpass("Backboard API key: ").strip()
-    if not api_key:
-        print(c("No API key provided. Set BACKBOARD_API_KEY and rerun.", RED))
+        print(c("No API key provided. Put it in dnd_api_key.txt and rerun.", RED))
         sys.exit(1)
 
     session = load_session()
