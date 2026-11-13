@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Backboard D&D - a text adventure where the LLM is your Dungeon Master.
+"""Backboard D&D - a graphical text adventure where the LLM is the DM.
 
-Pure standard-library Python (no pip installs). Talks directly to the
-Backboard API at https://app.backboard.io/api.
+Runs a local web server (stdlib only, no pip installs) and opens the game
+in your browser. Talks to the Backboard API at https://app.backboard.io/api
+server-side, so the API key never reaches the browser.
 
 Run:        python backboard_dnd.py
 API key:    put your key on the first line of dnd_api_key.txt, or set
             BACKBOARD_API_KEY, or pass it as an argument:
             python backboard_dnd.py YOUR-KEY
-Commands:   /help  /new  /model  /plot  /quit
+
+Scenes and sound effects are driven by two editable text files:
+            media/images/image_prompts.txt   (scene id | file | prompt)
+            media/audio/sfx_list.txt         (sfx id | file | description)
 """
 
 import json
@@ -17,25 +21,20 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 import dnd_plot  # the editable plot & constraints file
 
+BASE = os.path.dirname(os.path.abspath(__file__))
 API = "https://app.backboard.io/api"
-SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            ".dnd_session.json")
-KEY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "dnd_api_key.txt")
+SESSION_FILE = os.path.join(BASE, ".dnd_session.json")
+KEY_FILE = os.path.join(BASE, "dnd_api_key.txt")
+IMAGE_PROMPTS_FILE = os.path.join(BASE, "media", "images", "image_prompts.txt")
+SFX_LIST_FILE = os.path.join(BASE, "media", "audio", "sfx_list.txt")
 
-# ANSI colors
-GOLD = "\033[93m"
-DIM = "\033[90m"
-RED = "\033[91m"
-BOLD = "\033[1m"
-RESET = "\033[0m"
-
-# Common chat models, tried in order as defaults. No hardcoded model is ever
-# sent to the API without first verifying it exists in GET /models - the
-# chosen model always comes from that live list.
+# Common chat models, tried in order as defaults. No model id is ever sent
+# to the API without first verifying it exists in GET /models.
 PREFERRED_MODELS = [
     "openai/gpt-4o",
     "anthropic/claude-3-5-sonnet-20241022",
@@ -45,12 +44,33 @@ PREFERRED_MODELS = [
 ]
 
 
-def supports_color():
-    return sys.stdout.isatty() and os.name == "posix"
+def read_api_key():
+    """Resolve the Backboard API key.
 
-
-def c(text, color):
-    return color + text + RESET if supports_color() else text
+    Order: dnd_api_key.txt file, BACKBOARD_API_KEY env var, command-line
+    argument, then a plain *visible* input prompt (getpass is deliberately
+    not used - hidden prompts misbehave in some Windows terminals).
+    """
+    try:
+        with open(KEY_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    return line
+    except OSError:
+        pass
+    key = os.environ.get("BACKBOARD_API_KEY", "").strip()
+    if key:
+        return key
+    if len(sys.argv) > 1:
+        return sys.argv[1].strip()
+    print("No API key found.")
+    print("Recommended: paste your key on the first line of dnd_api_key.txt")
+    print("(or run: python backboard_dnd.py YOUR-KEY, or set BACKBOARD_API_KEY).")
+    try:
+        return input("Backboard API key (typed visibly): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
 
 
 def api_call(api_key, path, payload=None):
@@ -91,49 +111,84 @@ def save_session(session):
 
 
 def pick_model(api_key):
-    """Load models from GET /models and pick a default that actually exists."""
-    print(c("Loading available models from Backboard...", DIM))
+    """Pick the DM model from the live GET /models list only."""
     query = urllib.parse.urlencode({"model_type": "llm", "limit": 500})
-    try:
-        result = api_call(api_key, "/models?" + query)
-    except RuntimeError as e:
-        print(c(str(e), RED))
-        return None, []
+    result = api_call(api_key, "/models?" + query)
     models = result.get("models", [])
     if not models:
-        print(c("No LLM models are available for this API key.", RED))
-        return None, []
+        raise RuntimeError("No LLM models are available for this API key.")
     model_ids = ["%s/%s" % (m.get("provider"), m.get("name")) for m in models]
     for preferred in PREFERRED_MODELS:
         if preferred in model_ids:
-            return preferred, model_ids
-    return model_ids[0], model_ids
+            return preferred
+    return model_ids[0]
 
 
-def choose_model(api_key, current, model_ids):
-    """Interactive /model picker over the live model list."""
-    print("\nAvailable models (first 100 shown; type the full id):")
-    for mid in model_ids[:100]:
-        marker = c("  <-- current", GOLD) if mid == current else ""
-        print("  " + mid + marker)
-    if len(model_ids) > 100:
-        print(c("  ... and %d more" % (len(model_ids) - 100), DIM))
-    choice = input("\nModel id (empty to keep current): ").strip()
-    if not choice:
-        return current
-    if choice in model_ids:
-        return choice
-    print(c("That id is not in your model list; keeping %s." % current, RED))
-    return current
+def parse_media_list(path):
+    """Parse 'id | file | description' lines (comments with #, blank lines ok)."""
+    entries = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = [p.strip() for p in line.split("|")]
+                if len(parts) >= 3:
+                    entries[parts[0].lower()] = {
+                        "file": parts[1],
+                        "description": parts[2],
+                    }
+    except OSError:
+        pass
+    return entries
 
 
-def system_prompt():
+def load_media():
+    scenes = parse_media_list(IMAGE_PROMPTS_FILE)
+    sfx = parse_media_list(SFX_LIST_FILE)
+    return scenes, sfx
+
+
+def system_prompt(scenes, sfx):
+    scene_lines = "\n".join(
+        "  - %s (%s)" % (sid, scenes[sid]["description"])
+        for sid in sorted(scenes))
+    sfx_lines = "\n".join(
+        "  - %s (%s)" % (sid, sfx[sid]["description"])
+        for sid in sorted(sfx))
     return (
-        "You are the Dungeon Master of a text adventure. You narrate the "
-        "story, play every NPC, and adjudicate the player's actions.\n"
+        "You are the Dungeon Master of a graphical text adventure. You "
+        "narrate the story, play every NPC, and adjudicate the player's "
+        "actions. The player sees your narration in a dialog box; the game "
+        "renders backgrounds, sounds, the character panel, and the inventory "
+        "for you based on special tags you emit.\n"
         "\nPLOT AND CONSTRAINTS (follow these strictly):\n"
         + dnd_plot.PLOT.strip()
-        + "\n\nDM RULES:\n"
+        + "\n\nTAG PROTOCOL (obey exactly):\n"
+        "- When the scene CHANGES (new location, or a significant shift "
+        "within one), you MUST emit a scene tag on its own line, choosing "
+        "the best-fitting scene id from AVAILABLE SCENES below:\n"
+        "     [[SCENE: scene_id]]\n"
+        "  and also write a short vivid description of the new setting "
+        "in your narration. Never draw ASCII art, and never emit a scene "
+        "tag when the scene has not changed.\n"
+        "- For dramatic moments (doors opening, combat, discovery, danger), "
+        "you may add a sound-effect tag on its own line:\n"
+        "     [[SFX: sfx_id]]\n"
+        "  using only ids from AVAILABLE SOUNDS below. At most one SFX tag "
+        "per reply.\n"
+        "- When the player confirms their character, emit exactly one "
+        "character tag on its own line:\n"
+        "     [[CHARACTER: Name | ancestry | calling | keepsake item | "
+        "personality trait]]\n"
+        "  This makes the character panel and the game buttons appear.\n"
+        "- Whenever the player gains or loses an item, emit an item tag on "
+        "its own line:\n"
+        "     [[ITEM +: item name]]   or   [[ITEM -: item name]]\n"
+        "- Tags are stripped from what the player reads, so never explain a "
+        "tag inside your narration and never rely on tag text as prose.\n"
+        "\nDM RULES:\n"
         "- Write immersive second-person narration ('You step into...').\n"
         "- Never decide the player's actions, words, or feelings. End each "
         "turn by letting the player act.\n"
@@ -141,200 +196,162 @@ def system_prompt():
         "CHARACTER CREATION SCENE (one question at a time), then the "
         "adventure. Do not skip character creation and do not front-load "
         "all questions at once.\n"
-        "- When the scene CHANGES (new location, or a significant shift "
-        "within one), you MUST include:\n"
-        "  (1) a short vivid description of the new setting, and\n"
-        "  (2) a simple ASCII drawing of the scene inside a fenced code "
-        "block, e.g.:\n"
-        "     ```\n"
-        "     [ascii art]\n"
-        "     ```\n"
-        "  The ASCII art must be one self-contained drawing (max ~20 lines, "
-        "max ~60 chars wide) showing the location's layout and key features, "
-        "using characters like |, -, +, ~, ^, o, @.\n"
-        "- If the scene has NOT changed, reply with plain narration and no "
-        "code block.\n"
         "- Wrap dice rolls and mechanical results in *asterisks*, e.g. "
         "*You roll a 14 on DEX - success*.\n"
-        "- Keep replies focused: 2-6 short paragraphs, plus the scene block "
-        "when it changes."
+        "- Keep replies focused: 2-6 short paragraphs.\n"
+        + ("\nAVAILABLE SCENES (scene ids you may use with [[SCENE:]]):\n"
+           + scene_lines + "\n" if scenes else "")
+        + ("\nAVAILABLE SOUNDS (sfx ids you may use with [[SFX:]]):\n"
+           + sfx_lines if sfx else "")
     )
 
 
 NEW_GAME_MESSAGE = (
     "Begin a new adventure. Start with the PROLOGUE: a short vivid "
     "introduction to the plot and world described in your instructions, "
-    "presenting the opening setting with an ASCII drawing. Then "
-    "immediately begin the CHARACTER CREATION SCENE: ask me my first "
-    "question (my character's name) and wait for my answer. Remember to "
-    "ask one question at a time and wait for my answer each time."
+    "presenting the opening setting and emitting the matching [[SCENE:]] "
+    "tag. Then immediately begin the CHARACTER CREATION SCENE: ask me my "
+    "first question (my character's name) and wait for my answer. Remember "
+    "to ask one question at a time and wait for my answer each time."
 )
 
 
-def print_reply(text):
-    """Print the DM reply; highlight fenced ASCII blocks in gold."""
-    inside_block = False
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            inside_block = not inside_block
-            continue
-        if inside_block:
-            print(c(line, GOLD))
+class Game:
+    def __init__(self, api_key, model, scenes, sfx):
+        self.api_key = api_key
+        self.model = model
+        self.scenes = scenes
+        self.sfx = sfx
+
+    def dm_turn(self, content, thread_id=None, assistant_id=None):
+        provider, _, name = self.model.partition("/")
+        payload = {
+            "content": content,
+            "system_prompt": system_prompt(self.scenes, self.sfx),
+            "llm_provider": provider,
+            "model_name": name,
+            "stream": False,
+        }
+        if thread_id:
+            payload["thread_id"] = thread_id
+        if assistant_id:
+            payload["assistant_id"] = assistant_id
+        result = api_call(self.api_key, "/threads/messages", payload)
+        status = result.get("status")
+        if status and status != "COMPLETED":
+            raise RuntimeError("Run ended with status %s." % status)
+        return result
+
+
+class Handler(SimpleHTTPRequestHandler):
+    game = None  # set by main()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=BASE, **kwargs)
+
+    def log_message(self, fmt, *args):
+        pass  # keep the console quiet; errors still print via exceptions
+
+    def _json(self, obj, code=200):
+        body = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _body(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            return json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+        except ValueError:
+            return {}
+
+    def do_GET(self):
+        if self.path == "/api/state":
+            session = load_session()
+            self._json({
+                "active": bool(session.get("thread_id")),
+                "model": self.game.model if self.game else None,
+            })
+        elif self.path == "/api/manifest":
+            self._json({"scenes": self.game.scenes, "sfx": self.game.sfx})
         else:
-            print(line)
+            super().do_GET()
 
-
-def dm_turn(api_key, session, content):
-    """Send a message and print the DM's reply. Returns True on success."""
-    provider, _, name = session["model"].partition("/")
-    payload = {
-        "content": content,
-        "system_prompt": system_prompt(),
-        "llm_provider": provider,
-        "model_name": name,
-        "stream": False,
-    }
-    if session.get("thread_id"):
-        payload["thread_id"] = session["thread_id"]
-    if session.get("assistant_id"):
-        payload["assistant_id"] = session["assistant_id"]
-
-    print(c("\n~ The DM ponders your fate... ~\n", DIM))
-    try:
-        result = api_call(api_key, "/threads/messages", payload)
-    except RuntimeError as e:
-        print(c(str(e), RED))
-        print(c("(Your message was not lost - fix the issue and resend, "
-                "or type /model to switch models.)\n", DIM))
-        return False
-
-    status = result.get("status")
-    if status and status != "COMPLETED":
-        print(c("Run ended with status %s (no reply)." % status, RED))
-        return False
-
-    if result.get("thread_id"):
-        session["thread_id"] = result["thread_id"]
-    if result.get("assistant_id"):
-        session["assistant_id"] = result["assistant_id"]
-    save_session(session)
-
-    print(c("Dungeon Master:", BOLD))
-    print_reply(result.get("content", ""))
-    print()
-    return True
-
-
-def print_help():
-    print("""
-Commands:
-  /new     abandon the current game and start a fresh one (new thread)
-  /model   pick a different DM model (from your live /models list)
-  /plot    show the current plot & constraints
-  /help    this help
-  /quit    leave the game
-Anything else is sent to the Dungeon Master.
-""")
-
-
-def read_api_key():
-    """Resolve the Backboard API key.
-
-    Order: dnd_api_key.txt file, BACKBOARD_API_KEY env var, command-line
-    argument, then a plain *visible* input prompt. The hidden getpass
-    prompt is deliberately not used - it is unreliable in several Windows
-    terminals and can appear to accept no typing at all.
-    """
-    # 1. Key file (first non-comment line of dnd_api_key.txt).
-    try:
-        with open(KEY_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    return line
-    except OSError:
-        pass
-    # 2. Environment variable.
-    key = os.environ.get("BACKBOARD_API_KEY", "").strip()
-    if key:
-        return key
-    # 3. Command-line argument.
-    if len(sys.argv) > 1:
-        return sys.argv[1].strip()
-    # 4. Visible prompt (what you type will be shown - that is intended).
-    print(c("No API key found.", RED))
-    print(c("Recommended: paste your key on the first line of dnd_api_key.txt", DIM))
-    print(c("(or run: python backboard_dnd.py YOUR-KEY, or set BACKBOARD_API_KEY).", DIM))
-    try:
-        return input("Backboard API key (typed visibly): ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return ""
+    def do_POST(self):
+        if not self.game:
+            self._json({"content": "Server not ready.", "error": True}, 503)
+            return
+        body = self._body()
+        session = load_session()
+        try:
+            if self.path == "/api/new":
+                result = self.game.dm_turn(NEW_GAME_MESSAGE)
+                session["thread_id"] = result.get("thread_id")
+                session["assistant_id"] = result.get("assistant_id")
+                save_session(session)
+                self._json({"content": result.get("content", "")})
+            elif self.path == "/api/send":
+                content = (body.get("content") or "").strip()
+                if not content:
+                    self._json({"content": "", "error": "empty message"}, 400)
+                    return
+                result = self.game.dm_turn(
+                    content,
+                    thread_id=session.get("thread_id"),
+                    assistant_id=session.get("assistant_id"))
+                if result.get("thread_id"):
+                    session["thread_id"] = result["thread_id"]
+                if result.get("assistant_id"):
+                    session["assistant_id"] = result["assistant_id"]
+                save_session(session)
+                self._json({"content": result.get("content", "")})
+            else:
+                self._json({"content": "not found", "error": True}, 404)
+        except RuntimeError as e:
+            self._json({"content": "", "error": str(e)}, 502)
 
 
 def main():
-    print(c("""
-+==============================================+
-|         ~  B A C K B O A R D   D & D  ~     |
-|       the LLM is your Dungeon Master         |
-+==============================================+
-""", GOLD))
-
+    print("Backboard D&D - graphical edition")
     api_key = read_api_key()
     if not api_key:
-        print(c("No API key provided. Put it in dnd_api_key.txt and rerun.", RED))
+        print("No API key provided. Put it in dnd_api_key.txt and rerun.")
         sys.exit(1)
 
-    session = load_session()
-
-    # Always pick the DM model from the live /models list - never assume a
-    # model id is valid for this account.
-    default_model, model_ids = pick_model(api_key)
-    if default_model is None:
+    try:
+        model = pick_model(api_key)
+    except RuntimeError as e:
+        print("Could not pick a DM model: %s" % e)
         sys.exit(1)
-    stored = session.get("model")
-    if stored and stored in model_ids:
-        session["model"] = stored
-    else:
-        session["model"] = default_model
-    save_session(session)
-    print(c("DM model: %s\n" % session["model"], GOLD))
+    print("DM model: %s" % model)
 
-    if session.get("thread_id"):
-        print(c("Continuing your previous adventure. Type /new to start over.\n", DIM))
-        print(c("Dungeon Master:", BOLD))
-        print(c("(resumed thread - ask the DM to recap: 'Give me a short recap of the story so far.')", DIM))
-    else:
-        print(c("Starting a new game: prologue, then character creation.\n", DIM))
-        dm_turn(api_key, session, NEW_GAME_MESSAGE)
+    scenes, sfx = load_media()
+    print("Loaded %d scene ids and %d sound ids from the media folders."
+          % (len(scenes), len(sfx)))
 
-    while True:
+    Handler.game = Game(api_key, model, scenes, sfx)
+
+    port = 8765
+    server = None
+    for attempt in range(10):
         try:
-            text = input(c("You > ", DIM)).strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nFarewell, adventurer.")
+            server = HTTPServer(("127.0.0.1", port), Handler)
             break
-        if not text:
-            continue
-        if text == "/quit":
-            print("Farewell, adventurer.")
-            break
-        elif text == "/help":
-            print_help()
-        elif text == "/new":
-            session["thread_id"] = None
-            session["assistant_id"] = None
-            save_session(session)
-            print(c("New game. The DM will begin with the prologue.\n", DIM))
-            dm_turn(api_key, session, NEW_GAME_MESSAGE)
-        elif text == "/model":
-            session["model"] = choose_model(api_key, session["model"], model_ids)
-            save_session(session)
-            print(c("DM model is now: %s\n" % session["model"], GOLD))
-        elif text == "/plot":
-            print(dnd_plot.PLOT.strip())
-        else:
-            dm_turn(api_key, session, text)
+        except OSError:
+            port += 1
+    if server is None:
+        print("Could not find a free local port.")
+        sys.exit(1)
+
+    url = "http://127.0.0.1:%d/" % port
+    print("Serving the game at %s (Ctrl+C to stop)" % url)
+    webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nFarewell, adventurer.")
 
 
 if __name__ == "__main__":

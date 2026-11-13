@@ -1,40 +1,48 @@
 # BackboardDND2026
 Backboard.io Nov 2026
 
-A text-adventure D&D game in pure Python (standard library only, no pip
-installs) where an LLM is the Dungeon Master. The DM generates both the
-story and simple ASCII scene drawings; whenever the scene changes, the
-reply includes a description of the new setting plus an ASCII drawing.
+A graphical text-adventure D&D game in pure Python (stdlib only) where an
+LLM is the Dungeon Master. Running `python backboard_dnd.py` starts a local
+server and opens the game in your browser automatically.
 
 ## Game flow
-1. **Prologue** - the DM introduces the plot and world, with an ASCII
-   drawing of the opening setting.
-2. **Character creation scene** - the DM then asks you about your
-   character one question at a time (name, ancestry, calling, keepsake,
-   personality trait), summarizes the character sheet, and asks you to
-   confirm.
-3. **The adventure** - play begins with the character you built.
+1. The UI starts empty except for the DM dialog and the typing area.
+2. **Prologue** - the DM introduces the plot and world and switches the
+   background image via a `[[SCENE: id]]` tag.
+3. **Character creation** - the DM asks one question at a time (name,
+   ancestry, calling, keepsake, trait). When you confirm, the DM emits a
+   `[[CHARACTER: ...]]` tag: your character appears top-left and the
+   Inventory / Map / Settings buttons appear top-right.
+4. **The adventure** - the DM narrates, changes backgrounds per scene,
+   plays sound effects via `[[SFX: id]]` tags on dramatic moments, and
+   updates your inventory via `[[ITEM +: x]]` / `[[ITEM -: x]]` tags.
 
 ## How to run
 ```
 python backboard_dnd.py
 ```
-**API key** - pick whichever you prefer:
-- Put your key on the first non-comment line of **`dnd_api_key.txt`** (recommended)
-- Run `python backboard_dnd.py YOUR-KEY`
-- Set the `BACKBOARD_API_KEY` environment variable
+**API key** - put your key on the first non-comment line of
+`dnd_api_key.txt` (recommended), pass it as an argument, or set
+`BACKBOARD_API_KEY`. Your key stays server-side; the browser never sees it.
 
-If none of those are found you'll get a plain visible prompt (the key will
-show as you type - that is intended, since hidden `getpass` prompts misbehave
-in some Windows terminals). The key is only used in memory and sent to
-`app.backboard.io`; it is in `.gitignore` so it won't be committed.
+## Media (images & audio)
+- `media/images/` - background images. `image_prompts.txt` lists every
+  scene: `scene_id | image_file | image-generation prompt`. The ids drive
+  the DM's scene tags; the prompts are ready to paste into any
+  image generator. Missing image files just keep the current background.
+- `media/audio/` - sound effects. `sfx_list.txt` lists every sound:
+  `sfx_id | audio_file | description`. The DM plays them on events and
+  the game plays `ui_click` when buttons are pressed. Missing files are
+  skipped silently. Note: browsers block audio before your first click /
+  keypress, so the very first sound may be muted - that is normal.
+
+Add, rename or remove scenes/sounds anytime - the server re-reads both
+lists at startup and tells the DM which ids exist.
 
 ## Commands
-`/new` start a fresh game (new thread) - `/model` pick a DM model from
-your live `/models` list - `/plot` show the current plot - `/help` - `/quit`
+Everything you type goes to the DM. `Settings -> New Game` restarts with a
+new thread. Progress (thread id, model) persists in `.dnd_session.json`.
 
 ## Editing the plot & constraints
-Edit **`dnd_plot.py`** (the general plot, game flow, and constraints).
-Changes apply to the next DM reply. Progress (thread id and model choice)
-is saved in `.dnd_session.json`, so the adventure continues across runs;
-delete that file (or use `/new`) to truly start over.
+Edit **`dnd_plot.py`** - the general plot, game flow, and constraints.
+Changes apply to the next DM reply.
