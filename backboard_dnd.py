@@ -30,6 +30,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 API = "https://app.backboard.io/api"
 SESSION_FILE = os.path.join(BASE, ".dnd_session.json")
 KEY_FILE = os.path.join(BASE, "dnd_api_key.txt")
+SAVE_FILE = os.path.join(BASE, "dnd_save.json")
 IMAGE_PROMPTS_FILE = os.path.join(BASE, "media", "images", "image_prompts.txt")
 SFX_LIST_FILE = os.path.join(BASE, "media", "audio", "sfx_list.txt")
 
@@ -276,6 +277,14 @@ class Handler(SimpleHTTPRequestHandler):
             })
         elif self.path == "/api/manifest":
             self._json({"scenes": self.game.scenes, "sfx": self.game.sfx})
+        elif self.path == "/api/save":
+            state = {}
+            try:
+                with open(SAVE_FILE, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+            except (OSError, ValueError):
+                pass
+            self._json(state if state else {})
         else:
             super().do_GET()
 
@@ -307,6 +316,17 @@ class Handler(SimpleHTTPRequestHandler):
                     session["assistant_id"] = result["assistant_id"]
                 save_session(session)
                 self._json({"content": result.get("content", "")})
+            elif self.path == "/api/save":
+                # Full player state: character, inventory, scene and the
+                # complete transcript, so any DM model can pick the game
+                # back up next session.
+                state = body.get("state") or {}
+                state["thread_id"] = session.get("thread_id")
+                state["assistant_id"] = session.get("assistant_id")
+                state["model"] = self.game.model
+                with open(SAVE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(state, f, indent=2)
+                self._json({"saved": True})
             else:
                 self._json({"content": "not found", "error": True}, 404)
         except RuntimeError as e:

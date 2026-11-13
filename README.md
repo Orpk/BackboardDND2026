@@ -40,8 +40,20 @@ Add, rename or remove scenes/sounds anytime - the server re-reads both
 lists at startup and tells the DM which ids exist.
 
 ## Commands
-Everything you type goes to the DM. `Settings -> New Game` restarts with a
-new thread. Progress (thread id, model) persists in `.dnd_session.json`.
+Everything you type goes to the DM. The typing box's prompt follows the
+DM's current question. While the DM thinks, an animated blade pulses next
+to the box.
+
+- `Settings` is visible from the very start; Inventory and Map unlock after
+  character creation.
+- `Settings -> Save & Quit` writes the full game state (character,
+  inventory, scene, complete transcript, thread id and model) to
+  `dnd_save.json`. On the next run the UI restores everything and the DM
+  continues through its Backboard thread - any model picked at startup can
+  pick the story up.
+- `Settings -> New Game` starts a fresh thread.
+
+Progress (thread id, model) also persists in `.dnd_session.json`.
 
 ## Editing the plot & constraints
 Edit **`dnd_plot.py`** - the general plot, game flow, and constraints.

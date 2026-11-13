@@ -41,15 +41,17 @@
   /* ---- top right: buttons ---- */
   #menu {
     position: fixed; top: 14px; right: 14px; z-index: 5;
-    display: none; gap: 8px;
+    display: flex; gap: 8px;  /* settings is always visible from the start */
   }
-  #menu.show { display: flex; animation: fadein .8s ease; }
   .mbtn {
     background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
     color: var(--gold); font-family: Georgia, serif; font-size: 14px;
     padding: 8px 16px; cursor: pointer; letter-spacing: 1px;
   }
   .mbtn:hover { background: rgba(60,48,20,.9); }
+  /* inventory/map unlock only after character creation */
+  #btn-inventory, #btn-map { display: none; }
+  #btn-inventory.show, #btn-map.show { display: inline-block; animation: fadein .8s ease; }
   /* ---- dialog + composer at the bottom ---- */
   #dialog {
     position: fixed; left: 50%; transform: translateX(-50%);
@@ -85,6 +87,17 @@
   }
   #send:hover { background: rgba(60,48,20,.9); }
   #send:disabled { opacity: .45; cursor: wait; }
+  /* ---- thinking indicator (left of the typing box) ---- */
+  #thinking {
+    display: none; align-self: center;
+    font-size: 22px; color: var(--gold); width: 34px; height: 34px; text-align: center;
+  }
+  #thinking.show { display: block; animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse {
+    0%   { transform: scale(1) rotate(-12deg); opacity: .55; }
+    50%  { transform: scale(1.3) rotate(12deg); opacity: 1; }
+    100% { transform: scale(1) rotate(-12deg); opacity: .55; }
+  }
   /* ---- modals ---- */
   .modal-back {
     position: fixed; inset: 0; z-index: 9; background: rgba(0,0,0,.6);
@@ -95,6 +108,9 @@
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     width: min(560px, 90vw); max-height: 80vh; overflow-y: auto; padding: 20px 24px;
   }
+  /* map modal: bigger, but never full screen */
+  #modal-map .modal { width: min(880px, 92vw); max-height: 86vh; }
+  #modal-map img { max-height: 72vh; }
   .modal h2 { color: var(--gold); letter-spacing: 2px; font-size: 15px; margin-bottom: 12px;
              font-family: 'Courier New', monospace; }
   .modal ul { padding-left: 20px; }
@@ -136,6 +152,7 @@
 </div>
 
 <div id="composer">
+  <div id="thinking">⚔</div>
   <input id="input" placeholder="What do you do?" autocomplete="off">
   <button id="send">Send</button>
 </div>
@@ -163,6 +180,7 @@
     <div class="note">Starting a new game abandons the current adventure and begins the prologue + character creation again.</div>
     <div class="close-row">
       <button id="btn-new-game">New Game</button>
+      <button id="btn-save-quit">Save &amp; Quit</button>
       <button data-close="modal-settings">Close</button>
     </div>
   </div>
@@ -177,6 +195,9 @@
   var inventory = [];
   var busy = false;
   var bgFront = "bg-a", bgBack = "bg-b";
+  var character = null;      // {name, ancestry, calling, keepsake, trait}
+  var history = [];          // transcript: {role: "player"|"dm", text}
+  var currentScene = null;
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -193,10 +214,18 @@
     } catch (e) {}
   }
 
+  function thinking(on) {
+    $("thinking").classList.toggle("show", on);
+    $("send").disabled = on;
+    $("btn-new-game").disabled = on;
+    $("btn-save-quit").disabled = on;
+  }
+
   // ---------- backgrounds ----------
   function applyScene(id) {
     var entry = scenes[id];
     if (!entry) return;  // unknown scene id: keep current background
+    currentScene = id;
     var back = $(bgBack);
     back.style.backgroundImage = 'url("/media/images/' + entry.file + '")';
     back.classList.add("on");
@@ -252,7 +281,12 @@
         }
         $("char-rows").innerHTML = html;
         $("char-panel").classList.add("show");
-        $("menu").classList.add("show");
+        $("btn-inventory").classList.add("show");
+        $("btn-map").classList.add("show");
+        character = {
+          name: a.fields[0], ancestry: a.fields[1], calling: a.fields[2],
+          keepsake: a.fields[3], trait: a.fields[4]
+        };
       } else if (a.type === "item") {
         if (a.dir === "+") {
           if (inventory.indexOf(a.item) < 0) inventory.push(a.item);
@@ -278,6 +312,23 @@
     $("dialog").scrollTop = $("dialog").scrollHeight;
   }
 
+  function updatePlaceholder(dmText) {
+    // Use the DM's current question as the typing prompt; fall back to a
+    // generic prompt when no question is pending.
+    var question = null;
+    var sentences = dmText.replace(/\n+/g, " ").split(/(?<=[?])/);
+    for (var i = sentences.length - 1; i >= 0; i--) {
+      var s = sentences[i].trim();
+      if (s.indexOf("?") >= 0) { question = s; break; }
+    }
+    if (question) {
+      question = question.replace(/^\W+/, "").slice(0, 80);
+      $("input").placeholder = question + " - type your answer";
+    } else {
+      $("input").placeholder = "What do you do?";
+    }
+  }
+
   function modal(id, show) { $(id).classList.toggle("show", show); }
   document.querySelectorAll("[data-close]").forEach(function (b) {
     b.addEventListener("click", function () { modal(b.getAttribute("data-close"), false); });
@@ -294,6 +345,7 @@
     modal("modal-settings", false);
     newGame();
   });
+  $("btn-save-quit").addEventListener("click", function () { saveAndQuit(); });
 
   function openMap() {
     var body = $("map-body");
@@ -323,6 +375,8 @@
     var parsed = parseTags(data.content || "");
     applyActions(parsed.actions);
     dmSpeak(parsed.text.trim() || "*(silence)*");
+    updatePlaceholder(parsed.text);
+    history.push({ role: "dm", text: parsed.text.trim() });
   }
 
   function send() {
@@ -330,26 +384,98 @@
     var text = $("input").value.trim();
     if (!text) return;
     busy = true;
-    $("send").disabled = true;
+    thinking(true);
     $("input").value = "";
     dmSpeak("*You:* " + esc(text).replace(/</g, "&lt;") + "\n\n*The DM ponders...*");
+    history.push({ role: "player", text: text });
     post("/api/send", { content: text }).then(handleReply).catch(function (e) {
       dmSpeak("*Error:* " + e, true);
-    }).then(function () { busy = false; $("send").disabled = false; $("input").focus(); });
+    }).then(function () { busy = false; thinking(false); $("input").focus(); });
   }
 
   function newGame() {
-    if (busy) return;
+    if (busy) {
+      modal("modal-settings", false);
+      dmSpeak("*The DM is still answering - wait for the spinning blade, then try New Game again.*");
+      return;
+    }
     busy = true;
-    $("send").disabled = true;
+    thinking(true);
+    modal("modal-settings", false);
     $("char-panel").classList.remove("show");
-    $("menu").classList.remove("show");
+    $("btn-inventory").classList.remove("show");
+    $("btn-map").classList.remove("show");
+    character = null;
+    history = [];
+    currentScene = null;
     $("dialog").classList.remove("show");
     inventory = [];
     dmSpeak("*A new tale begins...*");
     post("/api/new", {}).then(handleReply).catch(function (e) {
       dmSpeak("*Error:* " + e, true);
-    }).then(function () { busy = false; $("send").disabled = false; $("input").focus(); });
+    }).then(function () { busy = false; thinking(false); $("input").focus(); });
+  }
+
+  // ---------- save & quit / restore ----------
+  function saveAndQuit() {
+    var state = {
+      savedAt: new Date().toISOString(),
+      character: character,
+      inventory: inventory,
+      scene: currentScene,
+      history: history
+    };
+    post("/api/save", { state: state }).then(function (r) {
+      if (r.error) {
+        dmSpeak("*Save failed:* " + r.error, true);
+      } else {
+        modal("modal-settings", false);
+        dmSpeak("*Game saved.* Your character, inventory, scene and full transcript are stored in dnd_save.json.\n\nYou can close this tab and stop the server (Ctrl+C). Run the game again later and it picks up where you left off.");
+      }
+    }).catch(function (e) {
+      dmSpeak("*Save failed:* " + e, true);
+    });
+  }
+
+  function restore(save) {
+    if (!save) return false;
+    if (save.character && save.character.name) {
+      character = save.character;
+      $("char-name").textContent = character.name;
+      var labels = ["ancestry", "calling", "keepsake", "trait"];
+      var html = "";
+      for (var i = 0; i < labels.length; i++) {
+        if (character[labels[i]]) {
+          html += labels[i].charAt(0).toUpperCase() + labels[i].slice(1) + ": <b>"
+            + esc(character[labels[i]]) + "</b><br>";
+        }
+      }
+      $("char-rows").innerHTML = html;
+      $("char-panel").classList.add("show");
+      $("btn-inventory").classList.add("show");
+      $("btn-map").classList.add("show");
+    }
+    if (Array.isArray(save.inventory)) {
+      inventory = save.inventory.slice();
+      renderInventory();
+    }
+    if (save.scene) {
+      currentScene = save.scene;
+      applyScene(save.scene);
+    }
+    if (Array.isArray(save.history) && save.history.length) {
+      history = save.history.slice();
+      var lastDm = null;
+      for (var h = history.length - 1; h >= 0; h--) {
+        if (history[h].role === "dm") { lastDm = history[h].text; break; }
+      }
+      if (lastDm) {
+        dmSpeak(lastDm + "\n\n*(Adventure restored from your save. The DM remembers the story through its thread.)*");
+        updatePlaceholder(lastDm);
+      }
+      return true;
+    }
+    return !!save.character;
   }
 
   $("send").addEventListener("click", send);
@@ -358,16 +484,22 @@
   });
 
   // ---------- startup: nothing on screen but the dialog + typing area ------
-  fetch("/api/manifest").then(function (r) { return r.json(); }).then(function (m) {
-    scenes = m.scenes || {};
-    sfx = m.sfx || {};
-  }).catch(function () {});
-  fetch("/api/state").then(function (r) { return r.json(); }).then(function (s) {
-    $("settings-model").textContent = s.model ? "DM model: " + s.model : "";
-    if (!s.active) {
-      newGame();  // prologue + character creation fills the dialog
+  Promise.all([
+    fetch("/api/manifest").then(function (r) { return r.json(); }).catch(function () { return {}; }),
+    fetch("/api/state").then(function (r) { return r.json(); }).catch(function () { return {}; }),
+    fetch("/api/save").then(function (r) { return r.json(); }).catch(function () { return {}; })
+  ]).then(function (all) {
+    scenes = all[0].scenes || {};
+    sfx = all[0].sfx || {};
+    var state = all[1];
+    var save = all[2];
+    $("settings-model").textContent = state.model ? "DM model: " + state.model : "";
+    if (state.active) {
+      if (!restore(save.state)) {
+        dmSpeak("You return to your adventure. Type an action to continue - or open Settings for a new game.");
+      }
     } else {
-      dmSpeak("You return to your adventure. Type an action to continue - or open Settings for a new game.");
+      newGame();  // prologue + character creation fills the dialog
     }
   });
   $("input").focus();
